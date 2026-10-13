@@ -22,16 +22,7 @@ GROUPS = {
     "OVAL": [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400,
              377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109],
 }
-REGIONS = {
-    "eyes": ["EYES"],
-    "eyes_brows": ["EYES", "BROWS"],
-    "eyes_nose": ["EYES", "NOSE"],
-    "nose": ["NOSE"],
-    "mouth": ["LIPS"],
-    "nose_mouth": ["NOSE", "LIPS"],
-    "eyes_nose_mouth": ["EYES", "BROWS", "NOSE", "LIPS"],
-    "whole_face": ["OVAL"],
-}
+PARTS = {"eyes": "EYES", "brows": "BROWS", "nose": "NOSE", "mouth": "LIPS", "head": "OVAL"}
 
 
 def dedupe(faces):
@@ -146,8 +137,11 @@ def apply_effect(frame, mask, effect, intensity):
 class Censor:
     def __init__(self, o, video):
         self.o = o
-        self.idx = [i for g in REGIONS[o["region"]] for i in GROUPS[g]]
-        self.flat = o["region"] == "eyes"
+        groups = o["groups"]
+        if o["merge"] or len(groups) == 1:
+            self.sets = [([i for g in groups for i in GROUPS[g]], groups == ["EYES"])]
+        else:
+            self.sets = [(GROUPS[g], g == "EYES") for g in groups]
         self.det = Detector(video, o["max_faces"], o["small_faces"])
         self.video = video
         self.prev, self.miss, self.hold = [], 0, 5
@@ -166,9 +160,10 @@ class Censor:
             self.frames_with_faces += 1
             self.total = max(self.total, len(faces))
         for f in faces:
-            pts = f[self.idx].astype(np.float32)
-            mask = build_mask(pts, W, H, self.o["shape"], self.o["pad"], self.flat)
-            apply_effect(rgb, mask, self.o["effect"], self.o["intensity"])
+            for idx, flat in self.sets:
+                pts = f[idx].astype(np.float32)
+                mask = build_mask(pts, W, H, self.o["shape"], self.o["pad"], flat)
+                apply_effect(rgb, mask, self.o["effect"], self.o["intensity"])
         return rgb
 
 
@@ -271,17 +266,24 @@ def process_video(raw, o):
 
 
 def parse(inp):
-    region = inp.get("region", "eyes")
+    parts = inp.get("parts") or ["eyes"]
+    groups = []
+    for p in parts:
+        if p not in PARTS:
+            raise ValueError(f"Unknown part '{p}'.")
+        if PARTS[p] not in groups:
+            groups.append(PARTS[p])
+    if "OVAL" in groups:
+        groups = ["OVAL"]
     effect = inp.get("effect", "blur")
     shape = inp.get("shape", "box")
-    if region not in REGIONS:
-        raise ValueError(f"Unknown region '{region}'.")
     if effect not in ("blur", "pixelate", "bar"):
         raise ValueError(f"Unknown effect '{effect}'.")
     if shape not in ("box", "ellipse", "tight"):
         raise ValueError(f"Unknown shape '{shape}'.")
     return {
-        "region": region, "effect": effect, "shape": shape,
+        "groups": groups, "merge": bool(inp.get("merge", True)),
+        "effect": effect, "shape": shape,
         "intensity": max(1, min(100, int(inp.get("intensity", 60)))),
         "pad": max(0, min(100, float(inp.get("padding", 20)))) / 100.0,
         "max_faces": max(1, min(20, int(inp.get("max_faces", 10)))),
