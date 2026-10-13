@@ -50,7 +50,9 @@ class Detector:
         self.video = video and not small
         mode = vision.RunningMode.VIDEO if self.video else vision.RunningMode.IMAGE
         opts = vision.FaceLandmarkerOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=MODEL),
+            base_options=mp_python.BaseOptions(
+                model_asset_path=MODEL,
+                delegate=mp_python.BaseOptions.Delegate.CPU),
             running_mode=mode, num_faces=max_faces,
             min_face_detection_confidence=0.3,
             min_face_presence_confidence=0.3,
@@ -310,4 +312,10 @@ def handler(job):
 
 
 if __name__ == "__main__":
+    try:
+        Detector(False, 1, False)
+        print("Face landmarker ready", flush=True)
+    except Exception:
+        traceback.print_exc()
+        raise
     runpod.serverless.start({"handler": handler})
